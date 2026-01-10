@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Frontend Login</title>
+    <style>
+        body { font-family: Arial; padding: 20px; max-width: 800px; margin: 0 auto; }
+        button { padding: 10px 20px; margin: 10px 0; cursor: pointer; }
+        pre { background: #f5f5f5; padding: 15px; border-radius: 5px; overflow-x: auto; }
+        .success { color: green; }
+        .error { color: red; }
+    </style>
+</head>
+<body>
+    <h1>Test Frontend Login to Laravel</h1>
+    
+    <div>
+        <label>Username: <input type="text" id="username" value="testuser"></label><br>
+        <label>Password: <input type="password" id="password" value="123456"></label><br>
+        <button onclick="testLogin()">Test Login</button>
+    </div>
+    
+    <h2>Result:</h2>
+    <div id="result"></div>
+    
+    <script>
+        async function testLogin() {
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const resultDiv = document.getElementById('result');
+            
+            resultDiv.innerHTML = '<p>Testing...</p>';
+            
+            try {
+                const response = await fetch('http://localhost:8001/api/auth/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ username, password })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    resultDiv.innerHTML = `
+                        <p class="success">✅ Login SUCCESS!</p>
+                        <pre>${JSON.stringify(data, null, 2)}</pre>
+                        <p><strong>Token:</strong> ${data.token.substring(0, 50)}...</p>
+                        <p><strong>User:</strong> ${data.user.username} (${data.user.email})</p>
+                    `;
+                } else {
+                    resultDiv.innerHTML = `
+                        <p class="error">❌ Login FAILED!</p>
+                        <p><strong>Status:</strong> ${response.status}</p>
+                        <pre>${JSON.stringify(data, null, 2)}</pre>
+                    `;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <p class="error">❌ ERROR!</p>
+                    <pre>${error.message}</pre>
+                    <p>Possible reasons:</p>
+                    <ul>
+                        <li>Laravel is not running on port 8001</li>
+                        <li>CORS issue</li>
+                        <li>Network error</li>
+                    </ul>
+                `;
+            }
+        }
+    </script>
+</body>
+</html>

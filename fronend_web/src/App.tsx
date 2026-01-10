@@ -35,11 +35,20 @@ import EditLessonPage from './pages/EditLessonPage';
 import EditCoursePage from './pages/EditCoursePage';
 import EmailDraftPage from './pages/EmailDraftPage';
 
+// Admin Pages
+import AdminDashboardPage from './pages/admin/AdminDashboardPage';
+import AdminUsersPage from './pages/admin/AdminUsersPage';
+import AdminCoursesPage from './pages/admin/AdminCoursesPage';
+import AdminRAGPage from './pages/admin/AdminRAGPage';
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       refetchOnWindowFocus: false,
+      refetchOnMount: false,
+      refetchOnReconnect: false,
       retry: 1,
+      staleTime: 5 * 60 * 1000, // 5 minutes
     },
   },
 });
@@ -48,6 +57,21 @@ const queryClient = new QueryClient({
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   return isAuthenticated ? <>{children}</> : <Navigate to="/login" />;
+};
+
+// Admin Route Component - chỉ cho phép ADMIN
+const AdminRoute = ({ children }: { children: React.ReactNode }) => {
+  const { isAuthenticated, user } = useAuthStore();
+  
+  if (!isAuthenticated) {
+    return <Navigate to="/login" />;
+  }
+  
+  if (user?.role !== 'ADMIN') {
+    return <Navigate to="/dashboard" />;
+  }
+  
+  return <>{children}</>;
 };
 
 function App() {
@@ -84,6 +108,12 @@ function App() {
           <Route path="/teacher" element={<ProtectedRoute><TeacherDashboard /></ProtectedRoute>} />
           <Route path="/teacher/courses/:courseId" element={<ProtectedRoute><TeacherCourseDashboard /></ProtectedRoute>} />
           <Route path="/teacher/courses/:courseId/students/:studentId" element={<ProtectedRoute><StudentDetailPage /></ProtectedRoute>} />
+          
+          {/* Admin Routes */}
+          <Route path="/admin" element={<AdminRoute><AdminDashboardPage /></AdminRoute>} />
+          <Route path="/admin/users" element={<AdminRoute><AdminUsersPage /></AdminRoute>} />
+          <Route path="/admin/courses" element={<AdminRoute><AdminCoursesPage /></AdminRoute>} />
+          <Route path="/admin/rag" element={<AdminRoute><AdminRAGPage /></AdminRoute>} />
         </Routes>
       </Router>
       <Toaster position="top-right" />

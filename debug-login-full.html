@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug Login - Full Analysis</title>
+    <style>
+        body { 
+            font-family: 'Segoe UI', Arial; 
+            padding: 20px; 
+            max-width: 1200px; 
+            margin: 0 auto;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 { color: #333; border-bottom: 3px solid #4CAF50; padding-bottom: 10px; }
+        h2 { color: #666; margin-top: 30px; }
+        button { 
+            padding: 12px 24px; 
+            margin: 10px 5px; 
+            cursor: pointer;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+        button:hover { background: #45a049; }
+        pre { 
+            background: #f8f8f8; 
+            padding: 15px; 
+            border-radius: 5px; 
+            overflow-x: auto;
+            border-left: 4px solid #4CAF50;
+        }
+        .success { color: #4CAF50; font-weight: bold; }
+        .error { color: #f44336; font-weight: bold; }
+        .warning { color: #ff9800; font-weight: bold; }
+        .info { color: #2196F3; }
+        input {
+            padding: 10px;
+            margin: 5px 0;
+            width: 300px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .step {
+            background: #e3f2fd;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 5px;
+            border-left: 4px solid #2196F3;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 Debug Login - Full Analysis</h1>
+        
+        <div class="step">
+            <h2>Step 1: Test Laravel Health</h2>
+            <button onclick="testHealth()">Test Health Check</button>
+            <div id="healthResult"></div>
+        </div>
+        
+        <div class="step">
+            <h2>Step 2: Test Login</h2>
+            <div>
+                <label>Username: <input type="text" id="username" value="duy"></label><br>
+                <label>Password: <input type="password" id="password" value="123456"></label><br>
+                <button onclick="testLogin()">Test Login</button>
+            </div>
+            <div id="loginResult"></div>
+        </div>
+        
+        <div class="step">
+            <h2>Step 3: Test with Token</h2>
+            <button onclick="testWithToken()">Test Get Sessions (with token)</button>
+            <div id="tokenResult"></div>
+        </div>
+        
+        <div class="step">
+            <h2>Step 4: Simulate Frontend Login</h2>
+            <button onclick="simulateFrontendLogin()">Simulate React Login Flow</button>
+            <div id="frontendResult"></div>
+        </div>
+    </div>
+    
+    <script>
+        let savedToken = null;
+        const LARAVEL_URL = 'http://localhost:8001';
+        
+        async function testHealth() {
+            const resultDiv = document.getElementById('healthResult');
+            resultDiv.innerHTML = '<p class="info">⏳ Testing...</p>';
+            
+            try {
+                const response = await fetch(`${LARAVEL_URL}/api/health`);
+                const data = await response.json();
+                
+                if (response.ok) {
+                    resultDiv.innerHTML = `
+                        <p class="success">✅ Laravel is running!</p>
+                        <pre>${JSON.stringify(data, null, 2)}</pre>
+                    `;
+                } else {
+                    resultDiv.innerHTML = `
+                        <p class="error">❌ Health check failed</p>
+                        <p>Status: ${response.status}</p>
+                    `;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <p class="error">❌ Cannot connect to Laravel</p>
+                    <p>${error.message}</p>
+                    <p class="warning">Make sure Laravel is running on port 8001</p>
+                `;
+            }
+        }
+        
+        async function testLogin() {
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const resultDiv = document.getElementById('loginResult');
+            
+            resultDiv.innerHTML = '<p class="info">⏳ Testing login...</p>';
+            
+            const requestData = { username, password };
+            
+            try {
+                console.log('🔵 Sending login request:', requestData);
+                
+                const response = await fetch(`${LARAVEL_URL}/api/auth/login`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(requestData)
+                });
+                
+                console.log('🔵 Response status:', response.status);
+                console.log('🔵 Response headers:', [...response.headers.entries()]);
+                
+                const data = await response.json();
+                console.log('🔵 Response data:', data);
+                
+                if (response.ok) {
+                    savedToken = data.token;
+                    resultDiv.innerHTML = `
+                        <p class="success">✅ Login SUCCESS!</p>
+                        <h3>Response:</h3>
+                        <pre>${JSON.stringify(data, null, 2)}</pre>
+                        <h3>Token (first 50 chars):</h3>
+                        <p class="info">${data.token.substring(0, 50)}...</p>
+                        <h3>User Info:</h3>
+                        <p>ID: ${data.user.id}</p>
+                        <p>Username: ${data.user.username}</p>
+                        <p>Email: ${data.user.email}</p>
+                        <p>Role: ${data.user.role}</p>
+                        <p class="success">✅ Token saved! You can now test Step 3</p>
+                    `;
+                } else {
+                    resultDiv.innerHTML = `
+                        <p class="error">❌ Login FAILED!</p>
+                        <p><strong>Status Code:</strong> ${response.status}</p>
+                        <h3>Response:</h3>
+                        <pre>${JSON.stringify(data, null, 2)}</pre>
+                        <h3>Possible reasons:</h3>
+                        <ul>
+                            <li>Wrong username or password</li>
+                            <li>User does not exist</li>
+                            <li>Laravel validation error</li>
+                        </ul>
+                    `;
+                }
+            } catch (error) {
+                console.error('🔴 Login error:', error);
+                resultDiv.innerHTML = `
+                    <p class="error">❌ ERROR!</p>
+                    <pre>${error.message}</pre>
+                    <h3>Possible reasons:</h3>
+                    <ul>
+                        <li>CORS issue</li>
+                        <li>Network error</li>
+                        <li>Laravel not running</li>
+                    </ul>
+                `;
+            }
+        }
+        
+        async function testWithToken() {
+            const resultDiv = document.getElementById('tokenResult');
+            
+            if (!savedToken) {
+                resultDiv.innerHTML = '<p class="warning">⚠️ Please login first (Step 2)</p>';
+                return;
+            }
+            
+            resultDiv.innerHTML = '<p class="info">⏳ Testing with token...</p>';
+            
+            try {
+                console.log('🔵 Using token:', savedToken.substring(0, 30) + '...');
+                
+                const response = await fetch(`${LARAVEL_URL}/api/chat/sessions`, {
+                    headers: {
+                        'Authorization': `Bearer ${savedToken}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    resultDiv.innerHTML = `
+                        <p class="success">✅ Token is valid!</p>
+                        <p>Found ${data.length} chat sessions</p>
+                        <pre>${JSON.stringify(data, null, 2)}</pre>
+                    `;
+                } else {
+                    resultDiv.innerHTML = `
+                        <p class="error">❌ Token validation failed</p>
+                        <p>Status: ${response.status}</p>
+                        <pre>${JSON.stringify(data, null, 2)}</pre>
+                    `;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <p class="error">❌ ERROR!</p>
+                    <pre>${error.message}</pre>
+                `;
+            }
+        }
+        
+        async function simulateFrontendLogin() {
+            const resultDiv = document.getElementById('frontendResult');
+            resultDiv.innerHTML = '<p class="info">⏳ Simulating React frontend login flow...</p>';
+            
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            
+            try {
+                // Step 1: Login
+                console.log('🟢 Step 1: Login');
+                const loginResponse = await fetch(`${LARAVEL_URL}/api/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                
+                if (!loginResponse.ok) {
+                    throw new Error(`Login failed: ${loginResponse.status}`);
+                }
+                
+                const loginData = await loginResponse.json();
+                console.log('✅ Login success:', loginData);
+                
+                // Step 2: Save to localStorage (simulate)
+                console.log('🟢 Step 2: Save to localStorage');
+                const token = loginData.token;
+                const user = loginData.user;
+                
+                // Step 3: Get sessions
+                console.log('🟢 Step 3: Get chat sessions');
+                const sessionsResponse = await fetch(`${LARAVEL_URL}/api/chat/sessions`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const sessions = await sessionsResponse.json();
+                console.log('✅ Sessions:', sessions);
+                
+                resultDiv.innerHTML = `
+                    <p class="success">✅ Frontend flow simulation SUCCESS!</p>
+                    <h3>Step 1: Login ✅</h3>
+                    <p>Token: ${token.substring(0, 50)}...</p>
+                    <p>User: ${user.username} (${user.email})</p>
+                    
+                    <h3>Step 2: Save to localStorage ✅</h3>
+                    <p>Token and user would be saved to localStorage</p>
+                    
+                    <h3>Step 3: Get Sessions ✅</h3>
+                    <p>Found ${sessions.length} sessions</p>
+                    <pre>${JSON.stringify(sessions, null, 2)}</pre>
+                    
+                    <p class="success">🎉 All steps passed! Frontend should work.</p>
+                    <p class="warning">If frontend still fails, check:</p>
+                    <ul>
+                        <li>Browser console for errors</li>
+                        <li>React dev server is running</li>
+                        <li>Clear browser cache (Ctrl+Shift+R)</li>
+                        <li>Check api.ts config file</li>
+                    </ul>
+                `;
+                
+            } catch (error) {
+                console.error('🔴 Simulation error:', error);
+                resultDiv.innerHTML = `
+                    <p class="error">❌ Simulation FAILED!</p>
+                    <pre>${error.message}</pre>
+                    <p>Check console for details</p>
+                `;
+            }
+        }
+        
+        // Auto-run health check on load
+        window.onload = () => {
+            testHealth();
+        };
+    </script>
+</body>
+</html>

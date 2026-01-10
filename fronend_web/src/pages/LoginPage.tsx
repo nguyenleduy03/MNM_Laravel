@@ -35,17 +35,35 @@ const LoginPage = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Prevent double submission
+    if (loading) return;
+    
     setLoading(true);
 
     try {
+      console.log('🔵 Submitting:', isLogin ? 'Login' : 'Register', formData);
+      
       const response = isLogin
         ? await authService.login({ username: formData.username, password: formData.password })
         : await authService.register(formData);
+      
+      console.log('✅ Response:', response);
+      
+      // Save auth data
       setAuth(response.user, response.token);
-      toast.success(`${isLogin ? 'Login' : 'Registration'} successful!`);
-      navigate('/dashboard');
+      
+      toast.success(`${isLogin ? 'Đăng nhập' : 'Đăng ký'} thành công!`);
+      
+      // Navigate after a short delay to ensure state is saved
+      setTimeout(() => {
+        navigate('/dashboard');
+      }, 100);
+      
     } catch (error: any) {
-      toast.error(error.response?.data?.message || `${isLogin ? 'Login' : 'Registration'} failed`);
+      console.error('❌ Auth error:', error);
+      const errorMessage = error.response?.data?.message || error.message || `${isLogin ? 'Đăng nhập' : 'Đăng ký'} thất bại`;
+      toast.error(errorMessage);
     } finally {
       setLoading(false);
     }

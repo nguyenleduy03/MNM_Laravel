@@ -181,10 +181,13 @@ class TVUScraper:
         """
         today = datetime.now()
         
+        logger.info(f"🗓️ Calculating current week for date: {today.strftime('%d/%m/%Y')}")
+        
         # Lấy ngày bắt đầu học kỳ từ API nếu có
         if hasattr(self, 'current_hoc_ky_start'):
             hk_start = self.current_hoc_ky_start
             base_week = self.current_hoc_ky_base_week
+            logger.info(f"   Using stored HK start: {hk_start.strftime('%d/%m/%Y')}, base week: {base_week}")
         else:
             # Mặc định: HK2 2025-2026 bắt đầu 01/09/2025, là tuần 5
             current_month = today.month
@@ -194,21 +197,26 @@ class TVUScraper:
                 # HK1 hoặc HK2: bắt đầu từ tháng 9
                 hk_start = datetime(current_year, 9, 1)
                 base_week = 5  # Tuần đầu tiên của HK
+                logger.info(f"   Auto-detected: HK1/HK2, start: 01/09/{current_year}, base week: 5")
             elif 1 <= current_month <= 5:
                 # HK2: bắt đầu từ tháng 2
                 hk_start = datetime(current_year, 2, 1)
                 base_week = 1
+                logger.info(f"   Auto-detected: HK2, start: 01/02/{current_year}, base week: 1")
             else:
                 # HK3 (hè): bắt đầu từ tháng 6
                 hk_start = datetime(current_year, 6, 1)
                 base_week = 1
+                logger.info(f"   Auto-detected: HK3 (summer), start: 01/06/{current_year}, base week: 1")
         
         # Tính số tuần từ ngày bắt đầu
         days_diff = (today - hk_start).days
         week_offset = days_diff // 7
         tuan_hoc_ky = base_week + week_offset
         
-        logger.info(f"Current week calculated: {tuan_hoc_ky} (base: {base_week}, offset: {week_offset})")
+        logger.info(f"   📊 Calculation: days_diff={days_diff}, week_offset={week_offset}")
+        logger.info(f"   ✅ Current week: {tuan_hoc_ky}")
+        
         return tuan_hoc_ky
     
     def get_schedule(self, week: int = None, hoc_ky: str = None) -> List[Dict]:
@@ -396,25 +404,34 @@ class TVUScraper:
                 logger.info(f"Found ds_tuan_tkb format with {len(ds_tuan_tkb)} weeks")
                 logger.info(f"Looking for week: {target_week}")
                 
+                # Log all weeks available
+                all_weeks = [t.get('tuan_hoc_ky', t.get('tuan', 0)) for t in ds_tuan_tkb]
+                logger.info(f"Available weeks: {all_weeks}")
+                
                 # Chỉ lấy tuần target_week
                 for tuan_data in ds_tuan_tkb:
                     # Field chính xác là tuan_hoc_ky
                     tuan_number = tuan_data.get('tuan_hoc_ky', tuan_data.get('tuan', 0))
                     
                     # Filter theo tuần nếu có target_week
-                    if target_week and tuan_number != target_week:
+                    if target_week is not None and tuan_number != target_week:
+                        logger.info(f"⏭️ Skipping week {tuan_number} (looking for {target_week})")
                         continue
                     
-                    logger.info(f"Processing week {tuan_number}: {tuan_data.get('thong_tin_tuan', '')}")
+                    logger.info(f"✅ Processing week {tuan_number}: {tuan_data.get('thong_tin_tuan', '')}")
                     ds_thoi_khoa_bieu = tuan_data.get('ds_thoi_khoa_bieu', [])
+                    logger.info(f"   Found {len(ds_thoi_khoa_bieu)} schedule items in this week")
                     
                     for tkb in ds_thoi_khoa_bieu:
                         schedule = self._parse_single_schedule(tkb, target_week)
                         if schedule:
                             schedules.append(schedule)
+                            logger.info(f"   ✅ Parsed: {schedule.get('subject')} on {schedule.get('day_of_week')}")
+                        else:
+                            logger.warning(f"   ⚠️ Failed to parse schedule item")
                     
                     # Nếu đã tìm thấy tuần target, break
-                    if target_week and tuan_number == target_week:
+                    if target_week is not None and tuan_number == target_week:
                         break
             
             # Case 2: Array trực tiếp

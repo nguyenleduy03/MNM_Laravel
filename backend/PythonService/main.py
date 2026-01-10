@@ -82,8 +82,18 @@ IMAGE_CAPTION_AVAILABLE = False
 print("✅ OCR.space API available for Groq image reading")
 
 # ============================================================================
-# VECTOR DATABASE CLASS
+# VECTOR DATABASE CLASS - ChromaDB
 # ============================================================================
+
+# Try to import ChromaDB
+try:
+    import chromadb
+    from chromadb.config import Settings
+    CHROMADB_AVAILABLE = True
+    print("✅ ChromaDB available")
+except ImportError:
+    CHROMADB_AVAILABLE = False
+    print("⚠️  ChromaDB not available. Install: pip install chromadb")
 
 def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
     """Tính cosine similarity giữa 2 vectors"""
@@ -96,26 +106,240 @@ def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
     
     return dot_product / (magnitude1 * magnitude2)
 
+
+class ChromaVectorDB:
+    """
+    ChromaDB-based Vector Database for RAG
+    Professional vector database with persistence and fast similarity search
+    """
+    def __init__(self, persist_directory: str = "./chroma_db", collection_name: str = "knowledge_base"):
+        """Khởi tạo ChromaDB Vector Database"""
+        self.persist_directory = persist_directory
+        self.collection_name = collection_name
+        
+        # Initialize ChromaDB client with persistence
+        self.client = chromadb.PersistentClient(path=persist_directory)
+        
+        # Get or create collection
+        self.collection = self.client.get_or_create_collection(
+            name=collection_name,
+            metadata={"hnsw:space": "cosine"}  # Use cosine similarity
+        )
+        
+        print(f"✅ ChromaDB initialized: {self.collection.count()} documents in '{collection_name}'")
+    
+    def add_documents(self, documents: List[str], metadatas: List[Dict] = None, ids: List[str] = None):
+        """Thêm documents vào ChromaDB"""
+        if not documents:
+            return {"status": "error", "message": "No documents provided"}
+        
+        # Generate IDs if not provided
+        if ids is None:
+            import uuid
+            ids = [f"doc_{uuid.uuid4().hex[:8]}" for _ in documents]
+        
+        # Default metadata
+        if metadatas is None:
+            metadatas = [{"source": "manual", "created_at": datetime.now().isoformat()} for _ in documents]
+        else:
+            # Add created_at to each metadata
+            for m in metadatas:
+                if "created_at" not in m:
+                    m["created_at"] = datetime.now().isoformat()
+        
+        # Create embeddings using Gemini
+        embeddings = []
+        for doc in documents:
+            result = genai.embed_content(
+                model="models/text-embedding-004",
+                content=doc,
+                task_type="retrieval_document"
+            )
+            embeddings.append(result['embedding'])
+        
+        # Add to ChromaDB
+        self.collection.add(
+            ids=ids,
+            documents=documents,
+            embeddings=embeddings,
+            metadatas=metadatas
+        )
+        
+        print(f"✅ Added {len(documents)} documents to ChromaDB")
+        return {"status": "success", "count": len(documents), "ids": ids}
+    
+    def search(self, query: str, n_results: int = 5, min_similarity: float = 0.3) -> Dict:
+        """
+        Tìm kiếm documents tương tự trong ChromaDB
+        
+        Args:
+            query: Câu hỏi cần tìm
+            n_results: Số kết quả tối đa
+            min_similarity: Ngưỡng similarity tối thiểu (0.0 - 1.0)
+        """
+        if self.collection.count() == 0:
+            return {"documents": [], "distances": [], "metadatas": [], "ids": [], "similarities": []}
+        
+        # Create query embedding
+        result = genai.embed_content(
+            model="models/text-embedding-004",
+            content=query,
+            task_type="retrieval_query"
+        )
+        query_embedding = result['embedding']
+        
+        # Query ChromaDB
+        results = self.collection.query(
+            query_embeddings=[query_embedding],
+            n_results=min(n_results * 2, self.collection.count()),  # Get more to filter by threshold
+            include=["documents", "metadatas", "distances"]
+        )
+        
+        # Filter by similarity threshold (distance = 1 - similarity for cosine)
+        filtered_docs = []
+        filtered_distances = []
+        filtered_metadatas = []
+        filtered_ids = []
+        filtered_similarities = []
+        
+        if results['ids'] and results['ids'][0]:
+            for i, doc_id in enumerate(results['ids'][0]):
+                distance = results['distances'][0][i]
+                similarity = 1 - distance  # Convert distance to similarity
+                
+                if similarity >= min_similarity:
+                    filtered_docs.append(results['documents'][0][i])
+                    filtered_distances.append(distance)
+                    filtered_metadatas.append(results['metadatas'][0][i])
+                    filtered_ids.append(doc_id)
+                    filtered_similarities.append(similarity)
+        
+        # Limit to n_results
+        filtered_docs = filtered_docs[:n_results]
+        filtered_distances = filtered_distances[:n_results]
+        filtered_metadatas = filtered_metadatas[:n_results]
+        filtered_ids = filtered_ids[:n_results]
+        filtered_similarities = filtered_similarities[:n_results]
+        
+        # Log for debugging
+        if filtered_docs:
+            print(f"📚 ChromaDB found {len(filtered_docs)} relevant docs (threshold: {min_similarity})")
+            for i, (doc, sim) in enumerate(zip(filtered_docs, filtered_similarities)):
+                print(f"   {i+1}. similarity={sim:.3f} - {doc[:50]}...")
+        else:
+            print(f"📚 ChromaDB: No docs above threshold {min_similarity}")
+        
+        return {
+            "documents": filtered_docs,
+            "distances": filtered_distances,
+            "metadatas": filtered_metadatas,
+            "ids": filtered_ids,
+            "similarities": filtered_similarities
+        }
+    
+    def delete_all(self):
+        """Xóa tất cả documents"""
+        # Delete and recreate collection
+        self.client.delete_collection(self.collection_name)
+        self.collection = self.client.get_or_create_collection(
+            name=self.collection_name,
+            metadata={"hnsw:space": "cosine"}
+        )
+        print("✅ All documents deleted from ChromaDB")
+        return {"status": "success", "message": "All documents deleted"}
+    
+    def delete_document(self, doc_id: str):
+        """Xóa một document theo ID"""
+        try:
+            self.collection.delete(ids=[doc_id])
+            print(f"✅ Deleted document: {doc_id}")
+            return {"status": "success", "message": f"Document {doc_id} deleted"}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+    
+    def get_count(self) -> int:
+        """Lấy số lượng documents"""
+        return self.collection.count()
+    
+    def get_all_documents(self) -> Dict:
+        """Lấy tất cả documents"""
+        if self.collection.count() == 0:
+            return {"documents": [], "metadatas": [], "ids": [], "count": 0}
+        
+        results = self.collection.get(include=["documents", "metadatas"])
+        return {
+            "documents": results['documents'],
+            "metadatas": results['metadatas'],
+            "ids": results['ids'],
+            "count": len(results['ids'])
+        }
+    
+    def get_document_by_id(self, doc_id: str) -> Optional[Dict]:
+        """Lấy document theo ID"""
+        try:
+            results = self.collection.get(ids=[doc_id], include=["documents", "metadatas"])
+            if results['ids']:
+                return {
+                    "id": results['ids'][0],
+                    "document": results['documents'][0],
+                    "metadata": results['metadatas'][0]
+                }
+            return None
+        except Exception:
+            return None
+    
+    def update_document(self, doc_id: str, content: str, metadata: Dict = None):
+        """Cập nhật document (xóa cũ, thêm mới với embedding mới)"""
+        # Get old metadata if not provided
+        if metadata is None:
+            old_doc = self.get_document_by_id(doc_id)
+            if old_doc:
+                metadata = old_doc['metadata']
+            else:
+                metadata = {"source": "manual"}
+        
+        metadata["updated_at"] = datetime.now().isoformat()
+        
+        # Delete old document
+        self.collection.delete(ids=[doc_id])
+        
+        # Create new embedding
+        result = genai.embed_content(
+            model="models/text-embedding-004",
+            content=content,
+            task_type="retrieval_document"
+        )
+        
+        # Add updated document
+        self.collection.add(
+            ids=[doc_id],
+            documents=[content],
+            embeddings=[result['embedding']],
+            metadatas=[metadata]
+        )
+        
+        print(f"✅ Updated document: {doc_id}")
+        return {"status": "success", "id": doc_id}
+
+
+# Fallback to SimpleVectorDB if ChromaDB not available
 class SimpleVectorDB:
+    """Fallback Vector DB using JSON file (if ChromaDB not installed)"""
     def __init__(self, storage_file: str = "vector_db.json"):
-        """Khởi tạo Simple Vector Database"""
         self.storage_file = storage_file
         self.documents = []
         self.load()
     
     def load(self):
-        """Load data từ file"""
         if os.path.exists(self.storage_file):
             with open(self.storage_file, 'r', encoding='utf-8') as f:
                 self.documents = json.load(f)
     
     def save(self):
-        """Lưu data vào file"""
         with open(self.storage_file, 'w', encoding='utf-8') as f:
             json.dump(self.documents, f, ensure_ascii=False, indent=2)
     
     def add_documents(self, documents: List[str], metadatas: List[Dict] = None, ids: List[str] = None):
-        """Thêm documents vào database"""
         if ids is None:
             start_id = len(self.documents)
             ids = [f"doc_{start_id + i}" for i in range(len(documents))]
@@ -123,14 +347,12 @@ class SimpleVectorDB:
         if metadatas is None:
             metadatas = [{"source": "manual"} for _ in documents]
         
-        # Tạo embeddings
         for doc, metadata, doc_id in zip(documents, metadatas, ids):
             result = genai.embed_content(
                 model="models/text-embedding-004",
                 content=doc,
                 task_type="retrieval_document"
             )
-            
             self.documents.append({
                 "id": doc_id,
                 "document": doc,
@@ -141,12 +363,10 @@ class SimpleVectorDB:
         self.save()
         return {"status": "success", "count": len(documents)}
     
-    def search(self, query: str, n_results: int = 5) -> Dict:
-        """Tìm kiếm documents tương tự"""
+    def search(self, query: str, n_results: int = 5, min_similarity: float = 0.3) -> Dict:
         if not self.documents:
-            return {"documents": [], "distances": [], "metadatas": [], "ids": []}
+            return {"documents": [], "distances": [], "metadatas": [], "ids": [], "similarities": []}
         
-        # Tạo embedding cho query
         result = genai.embed_content(
             model="models/text-embedding-004",
             content=query,
@@ -154,19 +374,18 @@ class SimpleVectorDB:
         )
         query_embedding = result['embedding']
         
-        # Tính similarity với tất cả documents
         similarities = []
         for doc in self.documents:
             similarity = cosine_similarity(query_embedding, doc['embedding'])
-            similarities.append({
-                "document": doc['document'],
-                "distance": 1 - similarity,
-                "metadata": doc['metadata'],
-                "id": doc['id'],
-                "similarity": similarity
-            })
+            if similarity >= min_similarity:
+                similarities.append({
+                    "document": doc['document'],
+                    "distance": 1 - similarity,
+                    "metadata": doc['metadata'],
+                    "id": doc['id'],
+                    "similarity": similarity
+                })
         
-        # Sắp xếp theo similarity
         similarities.sort(key=lambda x: x['similarity'], reverse=True)
         top_results = similarities[:n_results]
         
@@ -174,27 +393,52 @@ class SimpleVectorDB:
             "documents": [r['document'] for r in top_results],
             "distances": [r['distance'] for r in top_results],
             "metadatas": [r['metadata'] for r in top_results],
-            "ids": [r['id'] for r in top_results]
+            "ids": [r['id'] for r in top_results],
+            "similarities": [r['similarity'] for r in top_results]
         }
     
     def delete_all(self):
-        """Xóa tất cả documents"""
         self.documents = []
         self.save()
         return {"status": "success", "message": "All documents deleted"}
     
+    def delete_document(self, doc_id: str):
+        self.documents = [d for d in self.documents if d['id'] != doc_id]
+        self.save()
+        return {"status": "success"}
+    
     def get_count(self) -> int:
-        """Lấy số lượng documents"""
         return len(self.documents)
     
     def get_all_documents(self) -> Dict:
-        """Lấy tất cả documents"""
         return {
             "documents": [doc['document'] for doc in self.documents],
             "metadatas": [doc['metadata'] for doc in self.documents],
             "ids": [doc['id'] for doc in self.documents],
             "count": len(self.documents)
         }
+    
+    def get_document_by_id(self, doc_id: str) -> Optional[Dict]:
+        for doc in self.documents:
+            if doc['id'] == doc_id:
+                return {"id": doc['id'], "document": doc['document'], "metadata": doc['metadata']}
+        return None
+    
+    def update_document(self, doc_id: str, content: str, metadata: Dict = None):
+        for i, doc in enumerate(self.documents):
+            if doc['id'] == doc_id:
+                result = genai.embed_content(
+                    model="models/text-embedding-004",
+                    content=content,
+                    task_type="retrieval_document"
+                )
+                self.documents[i]['document'] = content
+                self.documents[i]['embedding'] = result['embedding']
+                if metadata:
+                    self.documents[i]['metadata'] = metadata
+                self.save()
+                return {"status": "success", "id": doc_id}
+        return {"status": "error", "message": "Document not found"}
 
 # ============================================================================
 # FASTAPI APP SETUP
@@ -247,12 +491,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize Vector Database
-vector_db = SimpleVectorDB(storage_file="knowledge_base.json")
+# Initialize Vector Database (ChromaDB preferred, fallback to SimpleVectorDB)
+if CHROMADB_AVAILABLE:
+    vector_db = ChromaVectorDB(persist_directory="./chroma_db", collection_name="knowledge_base")
+    print("✅ Using ChromaDB for RAG")
+else:
+    vector_db = SimpleVectorDB(storage_file="knowledge_base.json")
+    print("⚠️  Using SimpleVectorDB (fallback) for RAG")
+
+# Backend URL - Spring Boot (8080) or Laravel (8001)
+# Change this when switching between backends
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8080")  # Default to Spring Boot
+print(f"📡 Backend URL: {BACKEND_URL}")
 
 # Initialize Agent Features
 if AGENT_FEATURES_AVAILABLE:
-    agent_features = AgentFeatures(spring_boot_url="http://localhost:8080")
+    agent_features = AgentFeatures(spring_boot_url=BACKEND_URL)
     print("✅ Agent Features initialized")
 else:
     agent_features = None
@@ -423,7 +677,7 @@ def get_user_id_from_token(token: str) -> Optional[int]:
         # Call Spring Boot API to get user profile
         headers = {"Authorization": f"Bearer {token}"}
         response = requests.get(
-            "http://localhost:8080/api/auth/profile",
+            f"{BACKEND_URL}/api/auth/profile",
             headers=headers,
             timeout=5
         )
@@ -452,6 +706,7 @@ class ChatRequest(BaseModel):
     image_base64: Optional[str] = None  # Base64 encoded image for vision analysis
     image_mime_type: Optional[str] = None  # e.g., "image/jpeg", "image/png"
     session_id: Optional[int] = None  # Chat session ID for conversation context
+    history: Optional[List[Dict]] = None  # Conversation history from frontend (avoids callback to backend)
     
     model_config = ConfigDict(
         json_schema_extra={
@@ -462,7 +717,8 @@ class ChatRequest(BaseModel):
                 "use_rag": True,
                 "image_base64": None,
                 "image_mime_type": None,
-                "session_id": None
+                "session_id": None,
+                "history": None
             }
         }
     )
@@ -511,6 +767,16 @@ class EmailDraft(BaseModel):
         # Ensure snake_case in JSON output
     )
 
+class ScheduleItem(BaseModel):
+    """Schedule item for display"""
+    dayOfWeek: str
+    startTime: str
+    endTime: str
+    subject: str
+    room: str
+    teacher: str
+    notes: Optional[str] = None
+
 class ChatResponse(BaseModel):
     response: str
     model: str
@@ -519,6 +785,7 @@ class ChatResponse(BaseModel):
     suggested_actions: Optional[List[ActionLink]] = None  # Links gợi ý
     tool_action: Optional[ToolAction] = None  # Action tự động thực thi
     email_draft: Optional[EmailDraft] = None  # Email draft for preview
+    schedules: Optional[List[ScheduleItem]] = None  # Schedule data for display
     
     model_config = ConfigDict(
         populate_by_name=True,
@@ -875,13 +1142,20 @@ async def chat(request: ChatRequest, authorization: Optional[str] = Header(None)
         
         print(f"{'='*60}\n")
         conversation_history = []
-        if request.session_id:
+        
+        # Priority 1: Use history from request (sent by frontend)
+        if request.history and len(request.history) > 0:
+            conversation_history = request.history[-10:]  # Last 10 messages
+            print(f"✅ Using history from request: {len(conversation_history)} messages")
+        # Priority 2: Load from backend if session_id provided
+        elif request.session_id:
             try:
                 print(f"💬 Loading conversation history for session {request.session_id}...")
-                # Call Spring Boot INTERNAL API (no auth required)
+                # Call Backend INTERNAL API (no auth required)
+                # Use longer timeout for single-threaded server
                 history_response = requests.get(
-                    f"http://localhost:8080/api/chat/internal/sessions/{request.session_id}/messages",
-                    timeout=5
+                    f"{BACKEND_URL}/api/chat/internal/sessions/{request.session_id}/messages",
+                    timeout=15  # Increased timeout
                 )
                 
                 if history_response.status_code == 200:
@@ -901,6 +1175,7 @@ async def chat(request: ChatRequest, authorization: Optional[str] = Header(None)
                     print(f"⚠️ Could not load session history: {history_response.status_code}")
             except Exception as e:
                 print(f"⚠️ Error loading conversation history: {e}")
+                print(f"   → Continuing without history (not critical)")
                 # Continue without history - not critical
         
         # ===== DECISION TREE: IMAGE vs AGENTS vs TOOLS =====
@@ -1018,10 +1293,17 @@ async def chat(request: ChatRequest, authorization: Optional[str] = Header(None)
                 if not isinstance(response_text, str):
                     response_text = str(response_text) if not isinstance(response_text, list) else '\n'.join(str(x) for x in response_text)
                 
+                # Extract schedules data for frontend display
+                schedules_data = result.get('schedules', [])
+                schedule_items = None
+                if schedules_data:
+                    schedule_items = [ScheduleItem(**s) for s in schedules_data]
+                
                 return ChatResponse(
                     response=response_text,
                     model=request.model,
-                    rag_enabled=False
+                    rag_enabled=False,
+                    schedules=schedule_items  # Include schedule data
                 ).model_dump()
             
             # ===== CHECK CALENDAR SYNC INTENT ===== (CẦN token + user_id)
@@ -1092,37 +1374,58 @@ async def chat(request: ChatRequest, authorization: Optional[str] = Header(None)
                 rag_enabled=False
             ).model_dump()
         
-        # System prompt - Personality của AI
-        system_prompt = """🎓 Bạn là AI Learning Assistant - Trợ lý học tập thông minh và thân thiện!
+        # System prompt - AI Tutor chuyên nghiệp với phương pháp sư phạm
+        system_prompt = """🎓 **BẠN LÀ AI TUTOR** - Gia sư AI chuyên nghiệp cho nền tảng học tập Agent For Edu.
 
-**Vai trò của bạn:**
-- Giáo viên ảo kiên nhẫn, nhiệt tình 👨‍🏫
-- Giải thích kiến thức rõ ràng, dễ hiểu
-- Khuyến khích học sinh tư duy và đặt câu hỏi
-- Luôn tích cực và động viên
-- Nhớ context của cuộc trò chuyện (như ChatGPT)
+## 🎯 NGUYÊN TẮC SƯ PHẠM CHUẨN (BẮT BUỘC TUÂN THỦ):
 
-**Phong cách giao tiếp:**
-- Thân thiện, gần gũi như người bạn 😊
-- Sử dụng emoji phù hợp để sinh động: 📚 ✨ 💡 🎯 ✅
-- Chia nhỏ kiến thức phức tạp thành các phần dễ hiểu
-- Đưa ra ví dụ thực tế, gần gũi với cuộc sống
+### 1. PHƯƠNG PHÁP SOCRATIC (Hỏi để dẫn dắt)
+- KHÔNG đưa đáp án ngay lập tức
+- Đặt câu hỏi gợi mở: "Em đã thử cách nào?", "Em nghĩ tại sao...?"
+- Dẫn dắt học sinh TỰ tìm ra câu trả lời
+- Chỉ giải thích khi học sinh thực sự bế tắc
 
-**Cách trả lời:**
-1. Tóm tắt ngắn gọn câu hỏi (nếu cần)
-2. Giải thích chi tiết với cấu trúc rõ ràng
-3. Đưa ra 1-2 ví dụ minh họa
-4. Hỏi lại xem còn thắc mắc gì không
+### 2. SCAFFOLDING (Hỗ trợ từng bước)
+- Chia vấn đề phức tạp → các bước nhỏ
+- Kiểm tra hiểu biết sau mỗi bước
+- Tăng dần độ khó, giảm dần hỗ trợ
 
-**Lưu ý:**
-- Nếu không chắc chắn, hãy thừa nhận và đề xuất tìm hiểu thêm
-- Khuyến khích học sinh tự suy nghĩ trước khi đưa ra đáp án
-- Sử dụng ngôn ngữ phù hợp với trình độ học sinh
-- Nhớ thông tin từ các tin nhắn trước trong phiên chat này
+### 3. BLOOM'S TAXONOMY (Phân loại tư duy)
+- Nhớ → Hiểu → Áp dụng → Phân tích → Đánh giá → Sáng tạo
+- Khuyến khích học sinh lên mức tư duy cao hơn
+
+## 📚 CÁCH SỬ DỤNG TÀI LIỆU THAM KHẢO (RAG):
+- Khi có tài liệu: ƯU TIÊN trả lời dựa trên tài liệu
+- Trích dẫn nguồn: "Theo tài liệu khóa học...", "Như đã học trong bài..."
+- Nếu tài liệu không đủ: Bổ sung từ kiến thức chung + ghi chú rõ
+- Liên kết kiến thức mới với kiến thức đã học
+
+## 💬 PHONG CÁCH GIAO TIẾP:
+- Thân thiện, kiên nhẫn như gia sư thực thụ
+- Emoji vừa phải: 📚 💡 ✅ 🎯 (không spam)
+- Ngắn gọn, đi thẳng vào vấn đề
+- Dùng ví dụ thực tế, gần gũi đời sống Việt Nam
+
+## 📝 FORMAT TRẢ LỜI:
+```
+1. [Nếu cần] Làm rõ câu hỏi
+2. Giải thích/Hướng dẫn (có cấu trúc)
+3. Ví dụ minh họa cụ thể
+4. Câu hỏi kiểm tra hoặc gợi ý tiếp theo
+```
+
+## ⚠️ LƯU Ý QUAN TRỌNG:
+- Nhớ context cuộc trò chuyện (conversation memory)
+- Điều chỉnh độ khó theo trình độ học sinh
+- Khen ngợi khi học sinh tiến bộ
+- Nếu không chắc → thừa nhận và đề xuất tìm hiểu thêm
 """
         
         context_docs = []
         prompt = request.message
+        
+        # Log RAG status
+        print(f"🤖 Chat request - use_rag: {request.use_rag}, vector_db count: {vector_db.get_count()}")
         
         # Build conversation context if available
         conversation_context = ""
@@ -1136,32 +1439,73 @@ async def chat(request: ChatRequest, authorization: Optional[str] = Header(None)
         
         # Nếu bật RAG, tìm kiếm context từ vector DB
         if request.use_rag and vector_db.get_count() > 0:
-            search_results = vector_db.search(request.message, n_results=3)
+            print(f"🔍 RAG enabled! Searching in {vector_db.get_count()} documents...")
+            print(f"🔍 Query: {request.message}")
+            # Search với threshold 0.35 để chỉ lấy tài liệu thực sự liên quan
+            search_results = vector_db.search(request.message, n_results=5, min_similarity=0.35)
             context_docs = search_results['documents']
+            print(f"📚 Found {len(context_docs)} relevant documents")
+            if context_docs:
+                for i, doc in enumerate(context_docs):
+                    print(f"  📄 Doc {i+1}: {doc[:100]}...")
             
             if context_docs:
-                context_text = "\n\n".join([f"📚 Tài liệu {i+1}: {doc}" for i, doc in enumerate(context_docs)])
+                context_text = "\n\n".join([f"📚 **Tài liệu {i+1}:**\n{doc}" for i, doc in enumerate(context_docs)])
                 prompt = f"""{system_prompt}
 
-{conversation_context}**Tài liệu tham khảo từ khóa học:**
+---
+## 📖 TÀI LIỆU THAM KHẢO TỪ KHÓA HỌC:
 {context_text}
 
-**Câu hỏi của học sinh:**
+---
+## 💬 LỊCH SỬ TRÒ CHUYỆN:
+{conversation_context}
+
+---
+## ❓ CÂU HỎI CỦA HỌC SINH:
 {request.message}
 
-Hãy trả lời dựa trên lịch sử cuộc trò chuyện, tài liệu và kiến thức của bạn. Nếu tài liệu không đủ thông tin, hãy bổ sung từ kiến thức chung."""
+---
+## 📋 HƯỚNG DẪN TRẢ LỜI:
+1. **ƯU TIÊN** sử dụng thông tin từ tài liệu tham khảo
+2. Trích dẫn nguồn khi sử dụng: "Theo tài liệu...", "Như trong bài học..."
+3. Nếu tài liệu không đủ → bổ sung từ kiến thức chung + ghi chú
+4. Áp dụng phương pháp Socratic: hỏi gợi mở thay vì đưa đáp án ngay
+5. Kết thúc bằng câu hỏi kiểm tra hoặc gợi ý học tiếp"""
             else:
                 prompt = f"""{system_prompt}
 
-{conversation_context}**Câu hỏi của học sinh:**
+---
+## 💬 LỊCH SỬ TRÒ CHUYỆN:
+{conversation_context}
+
+---
+## ❓ CÂU HỎI CỦA HỌC SINH:
 {request.message}
 
-Hãy trả lời dựa trên lịch sử cuộc trò chuyện và kiến thức của bạn."""
+---
+## 📋 HƯỚNG DẪN:
+- Không có tài liệu tham khảo → trả lời từ kiến thức chung
+- Áp dụng phương pháp Socratic: hỏi gợi mở, dẫn dắt tư duy
+- Đưa ví dụ thực tế, gần gũi
+- Kết thúc bằng câu hỏi kiểm tra hoặc gợi ý"""
         else:
             prompt = f"""{system_prompt}
 
-{conversation_context}**Câu hỏi của học sinh:**
-{request.message}"""
+---
+## 💬 LỊCH SỬ TRÒ CHUYỆN:
+{conversation_context}
+
+---
+## ❓ CÂU HỎI CỦA HỌC SINH:
+{request.message}
+
+---
+## 📋 HƯỚNG DẪN:
+- RAG đang tắt hoặc chưa có tài liệu
+- Trả lời từ kiến thức chung của bạn
+- Áp dụng phương pháp sư phạm: Socratic, scaffolding
+- Đưa ví dụ cụ thể, dễ hiểu"""
         
         # Check if image is provided for vision analysis
         content_parts = []
@@ -1609,6 +1953,96 @@ Chỉ trả về JSON, không thêm text khác."""
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Lỗi: {str(e)}")
 
+# ============================================================================
+# RAG - LESSON CONTENT INGESTION
+# ============================================================================
+
+class LessonContentRequest(BaseModel):
+    """Request để thêm nội dung bài học vào RAG"""
+    lesson_id: int
+    lesson_title: str
+    course_title: str
+    content: str
+    chunk_size: int = 500  # Chia nhỏ content thành chunks
+    
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "lesson_id": 1,
+                "lesson_title": "Giới thiệu Python",
+                "course_title": "Lập trình Python cơ bản",
+                "content": "Python là ngôn ngữ lập trình bậc cao...",
+                "chunk_size": 500
+            }
+        }
+    )
+
+@app.post("/api/rag/lesson", tags=["RAG - Knowledge Base"])
+async def add_lesson_to_rag(request: LessonContentRequest):
+    """
+    Thêm nội dung bài học vào RAG Knowledge Base
+    
+    - Tự động chia nhỏ content thành chunks
+    - Thêm metadata (lesson_id, course, title)
+    - Giúp AI trả lời chính xác hơn dựa trên nội dung khóa học
+    """
+    try:
+        content = request.content.strip()
+        if not content:
+            raise HTTPException(status_code=400, detail="Content không được rỗng")
+        
+        # Chia content thành chunks
+        chunks = []
+        words = content.split()
+        current_chunk = []
+        current_length = 0
+        
+        for word in words:
+            current_chunk.append(word)
+            current_length += len(word) + 1
+            
+            if current_length >= request.chunk_size:
+                chunk_text = " ".join(current_chunk)
+                chunks.append(chunk_text)
+                current_chunk = []
+                current_length = 0
+        
+        # Thêm chunk cuối nếu còn
+        if current_chunk:
+            chunks.append(" ".join(current_chunk))
+        
+        # Tạo metadata cho mỗi chunk
+        metadatas = []
+        ids = []
+        for i, chunk in enumerate(chunks):
+            metadatas.append({
+                "source": "lesson",
+                "lesson_id": request.lesson_id,
+                "lesson_title": request.lesson_title,
+                "course_title": request.course_title,
+                "chunk_index": i,
+                "total_chunks": len(chunks)
+            })
+            ids.append(f"lesson_{request.lesson_id}_chunk_{i}")
+        
+        # Thêm vào vector DB
+        result = vector_db.add_documents(
+            documents=chunks,
+            metadatas=metadatas,
+            ids=ids
+        )
+        
+        return {
+            "status": "success",
+            "message": f"Đã thêm bài học '{request.lesson_title}' vào RAG",
+            "chunks_added": len(chunks),
+            "total_documents": vector_db.get_count()
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Lỗi: {str(e)}")
+
 @app.post("/api/documents/add", tags=["RAG - Knowledge Base"])
 async def add_documents(request: DocumentRequest):
     """Thêm nhiều documents vào Vector Database"""
@@ -1659,6 +2093,89 @@ async def get_all_documents():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Lỗi: {str(e)}")
 
+@app.get("/api/documents/{doc_id}", tags=["RAG - Knowledge Base"])
+async def get_document_by_id(doc_id: str):
+    """Lấy một document theo ID"""
+    try:
+        doc = vector_db.get_document_by_id(doc_id)
+        if doc:
+            return doc
+        raise HTTPException(status_code=404, detail=f"Document '{doc_id}' không tồn tại")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Lỗi: {str(e)}")
+
+class UpdateDocumentRequest(BaseModel):
+    """Request để cập nhật document"""
+    content: str
+    metadata: Optional[Dict] = None
+    
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "content": "Nội dung mới của document",
+                "metadata": {"source": "lesson", "lesson_title": "Bài 1"}
+            }
+        }
+    )
+
+@app.put("/api/documents/{doc_id}", tags=["RAG - Knowledge Base"])
+async def update_document(doc_id: str, request: UpdateDocumentRequest):
+    """
+    Cập nhật nội dung một document (tự động tạo lại embedding)
+    """
+    try:
+        # Check if document exists
+        doc = vector_db.get_document_by_id(doc_id)
+        if not doc:
+            raise HTTPException(status_code=404, detail=f"Document '{doc_id}' không tồn tại")
+        
+        # Update document
+        result = vector_db.update_document(doc_id, request.content, request.metadata)
+        
+        if result.get("status") == "success":
+            return {
+                "status": "success",
+                "message": f"Đã cập nhật document '{doc_id}'",
+                "document": {
+                    "id": doc_id,
+                    "content": request.content[:100] + "..." if len(request.content) > 100 else request.content,
+                    "metadata": request.metadata or doc.get('metadata', {})
+                }
+            }
+        else:
+            raise HTTPException(status_code=500, detail=result.get("message", "Unknown error"))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Lỗi: {str(e)}")
+
+@app.delete("/api/documents/{doc_id}", tags=["RAG - Knowledge Base"])
+async def delete_document_by_id(doc_id: str):
+    """Xóa một document theo ID"""
+    try:
+        # Check if document exists
+        doc = vector_db.get_document_by_id(doc_id)
+        if not doc:
+            raise HTTPException(status_code=404, detail=f"Document '{doc_id}' không tồn tại")
+        
+        # Delete document
+        result = vector_db.delete_document(doc_id)
+        
+        return {
+            "status": "success",
+            "message": f"Đã xóa document '{doc_id}'",
+            "deleted": {
+                "id": doc_id,
+                "content_preview": doc.get('document', '')[:100] + "..."
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Lỗi: {str(e)}")
+
 @app.delete("/api/documents", tags=["RAG - Knowledge Base"])
 async def delete_all_documents():
     """Xóa tất cả documents trong Vector Database"""
@@ -1684,9 +2201,13 @@ async def get_rag_stats():
             cat = meta.get('category', 'unknown')
             categories[cat] = categories.get(cat, 0) + 1
         
+        # Determine database type
+        db_type = "ChromaDB" if CHROMADB_AVAILABLE else "SimpleVectorDB (JSON)"
+        
         return {
             "total_documents": all_docs['count'],
             "categories": categories,
+            "database_type": db_type,
             "status": "active"
         }
     except Exception as e:
@@ -2960,7 +3481,7 @@ async def generate_flashcards_from_lesson(
             headers["Authorization"] = authorization
         
         response = requests.get(
-            f"http://localhost:8080/api/lessons/{request.lesson_id}",
+            f"{BACKEND_URL}/api/lessons/{request.lesson_id}",
             headers=headers,
             timeout=10
         )

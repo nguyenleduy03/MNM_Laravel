@@ -47,12 +47,23 @@ interface Message {
   actions?: ActionLink[]; // Suggested action links
   toolAction?: ToolAction; // Auto-execute action
   emailDraft?: EmailDraft; // Email draft for preview
+  schedules?: ScheduleItem[]; // Schedule data for display
   attachment?: {
     type: 'image' | 'file';
     url: string;
     name: string;
     mimeType?: string;
   };
+}
+
+interface ScheduleItem {
+  dayOfWeek: string;
+  startTime: string;
+  endTime: string;
+  subject: string;
+  room: string;
+  teacher: string;
+  notes?: string;
 }
 
 type ChatMode = 'normal' | 'google-cloud' | 'rag' | 'agent';
@@ -90,16 +101,6 @@ const ChatPage = () => {
   const isMountedRef = useRef(true); // Track if component is mounted
   const timeoutsRef = useRef<NodeJS.Timeout[]>([]); // Track all timeouts for cleanup
   const scrollTimerRef = useRef<NodeJS.Timeout | null>(null); // Track scroll timer
-  const abortControllerRef = useRef<AbortController | null>(null); // ✅ Track abort controller
-  const initialLoadDoneRef = useRef<number | null>(null); // ✅ Track initial load
-
-  // Voice Chat Hook
-  const voiceChat = useVoiceChat({
-    onTranscript: (text) => {
-      setInput(text);
-    },
-    language: 'vi-VN', // Vietnamese
-  });
 
   // Cleanup on unmount
   useEffect(() => {
@@ -107,12 +108,6 @@ const ChatPage = () => {
 
     return () => {
       isMountedRef.current = false;
-      
-      // ✅ Cancel pending requests
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-      }
-      
       // Cancel all pending timeouts
       timeoutsRef.current.forEach(timeout => clearTimeout(timeout));
       timeoutsRef.current = [];
@@ -123,11 +118,34 @@ const ChatPage = () => {
     };
   }, []);
 
-  // Load chat sessions
-  const { data: sessions = [] } = useQuery({
+  // Voice Chat Hook
+  const voiceChat = useVoiceChat({
+    onTranscript: (text) => {
+      setInput(text);
+    },
+    language: 'vi-VN', // Vietnamese
+  });
+
+  // Load chat sessions - only when authenticated
+  const { data: sessions = [], isLoading: sessionsLoading, error: sessionsError } = useQuery({
     queryKey: ['chat-sessions'],
     queryFn: chatService.getSessions,
+    enabled: !!token && !!user, // Only fetch when logged in
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    refetchOnWindowFocus: false,
+    refetchOnMount: false,
+    retry: 1,
   });
+
+  // Log sessions state for debugging
+  useEffect(() => {
+    console.log('📊 Sessions state:', { 
+      count: sessions.length, 
+      loading: sessionsLoading, 
+      error: sessionsError,
+      authenticated: !!token && !!user 
+    });
+  }, [sessions, sessionsLoading, sessionsError, token, user]);
 
   // Load messages for current session - DISABLE auto refetch to prevent DOM conflicts
   const { data: sessionMessages = [] } = useQuery({
@@ -168,14 +186,28 @@ const ChatPage = () => {
     },
   });
 
-  // Initialize: Create or use first session
+  // Initialize: Create or use first session - only when authenticated
   useEffect(() => {
+    // Only run if user is authenticated
+    if (!token || !user) {
+      console.log('⚠️ User not authenticated, skipping session init');
+      return;
+    }
+
+    // Wait for sessions query to complete
+    if (sessionsLoading) {
+      console.log('⏳ Waiting for sessions to load...');
+      return;
+    }
+
     if (sessions.length > 0 && !currentSessionId) {
+      console.log('✅ Using existing session:', sessions[0].id);
       setCurrentSessionId(sessions[0].id);
-    } else if (sessions.length === 0 && !currentSessionId) {
+    } else if (sessions.length === 0 && !currentSessionId && !createSessionMutation.isPending) {
+      console.log('📝 Creating new session...');
       createSessionMutation.mutate('New Chat Session');
     }
-  }, [sessions]);
+  }, [sessions, sessionsLoading, token, user, currentSessionId]);
 
   // Reset initialLoadDone when switching sessions
   useEffect(() => {
@@ -412,17 +444,14 @@ const ChatPage = () => {
 
       // Get AI response with image if present
       console.log('Getting AI response...', imageBase64 ? 'with image' : 'text only');
-      console.log('🔍 DEBUG: Sending session_id:', currentSessionId);
       const aiResponse = await chatService.sendMessageWithActions(
         userMessageText,
         useRag,
         aiProvider,
         aiProvider === 'groq' ? selectedGroqModel : selectedGeminiModel,
         imageBase64,
-        imageMimeType,
-        currentSessionId || undefined
+        imageMimeType
       );
-      console.log('✅ DEBUG: AI response received');
 
       // Safely convert response to string (handle arrays and objects)
       let responseText = '';
@@ -490,6 +519,7 @@ const ChatPage = () => {
         actions: aiResponse.suggested_actions || [],
         toolAction: aiResponse.tool_action,
         emailDraft: emailDraft, // Add email draft if present
+        schedules: aiResponse.schedules || [], // Add schedules if present
       };
 
       console.log('📧 Message created with emailDraft:', aiMessage.emailDraft);
@@ -522,7 +552,10 @@ const ChatPage = () => {
           console.log('❌ emailDraft is falsy, not opening overlay');
         }
 
-        // ✅ Auto-speak AI response if enabled - SKIP for email draft
+        // TEMPORARILY DISABLED to prevent DOM conflicts
+        // Will re-enable after confirming core messaging works
+        /*
+        // Auto-speak AI response if enabled - SKIP for email draft
         if (autoSpeak && voiceChat.isSupported && !aiResponse.email_draft) {
           const speakTimeout = setTimeout(() => {
             if (isMountedRef.current) {
@@ -532,19 +565,21 @@ const ChatPage = () => {
           timeoutsRef.current.push(speakTimeout);
         }
 
-        // ✅ Auto-execute tool action if present
+        // Auto-execute tool action if present
         if (aiResponse.tool_action && aiResponse.tool_action.auto_execute) {
           console.log('Auto-executing tool:', aiResponse.tool_action);
-          
-          // Execute immediately instead of setTimeout
-          try {
-            console.log('🚀 Calling executeToolAction...');
-            executeToolAction(aiResponse.tool_action);
-            console.log('✅ executeToolAction completed');
-          } catch (toolError) {
-            console.error('❌ Tool execution failed:', toolError);
-          }
+          const toolTimeout = setTimeout(() => {
+            if (isMountedRef.current) {
+              try {
+                executeToolAction(aiResponse.tool_action);
+              } catch (toolError) {
+                console.error('❌ Tool execution failed:', toolError);
+              }
+            }
+          }, 1000);
+          timeoutsRef.current.push(toolTimeout);
         }
+        */
       }
 
       // Save AI message to database (skip email draft messages)
@@ -733,9 +768,10 @@ const ChatPage = () => {
 
   return (
     <ErrorBoundary>
-      <Layout>
-        <div className="max-w-5xl mx-auto h-[calc(100vh-12rem)]">
-          <div className="card h-full flex flex-col">
+      <div className="chat-page-modern">
+        <Layout>
+          <div className="max-w-5xl mx-auto h-[calc(100vh-12rem)]">
+            <div className="card h-full flex flex-col chat-container-modern">
             {/* Quota Warning Banner */}
             <AnimatePresence mode="wait">
               {showQuotaWarning && (
@@ -753,7 +789,9 @@ const ChatPage = () => {
                   <div>
                     <h1 className="text-2xl font-bold">AI Learning Assistant</h1>
                     <p className="text-sm text-gray-600">
-                      {currentSessionId ? `Session #${currentSessionId}` : 'Loading...'}
+                      {sessionsLoading ? 'Loading sessions...' : 
+                       currentSessionId ? `Session #${currentSessionId}` : 
+                       'Initializing...'}
                     </p>
                   </div>
                 </div>
@@ -886,6 +924,32 @@ const ChatPage = () => {
 
             {/* Messages */}
             <div className="flex-1 overflow-y-auto space-y-4 mb-4">
+              {/* Show loading or error state */}
+              {!currentSessionId && sessionsLoading && (
+                <div className="flex items-center justify-center h-full">
+                  <div className="text-center">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
+                    <p className="text-gray-600">Loading chat sessions...</p>
+                  </div>
+                </div>
+              )}
+              
+              {!currentSessionId && !sessionsLoading && sessionsError && (
+                <div className="flex items-center justify-center h-full">
+                  <div className="text-center">
+                    <p className="text-red-600 mb-4">Failed to load sessions</p>
+                    <button
+                      onClick={() => createSessionMutation.mutate('New Chat Session')}
+                      className="btn-primary"
+                      disabled={createSessionMutation.isPending}
+                    >
+                      {createSessionMutation.isPending ? 'Creating...' : 'Create New Session'}
+                    </button>
+                  </div>
+                </div>
+              )}
+              
+              {currentSessionId && (
               <AnimatePresence initial={false}>
                 {messages.map((message) => {
                   // Debug log for each message
@@ -1013,6 +1077,49 @@ const ChatPage = () => {
                             </div>
                           )}
 
+                          {/* Schedule Display */}
+                          {message.sender === 'ai' && message.schedules && message.schedules.length > 0 && (
+                            <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700 space-y-2">
+                              <p className="text-xs text-gray-500 dark:text-gray-400 font-medium mb-2">📅 Thời khóa biểu:</p>
+                              {message.schedules.map((schedule, idx) => (
+                                <motion.div
+                                  key={idx}
+                                  initial={{ opacity: 0, y: 10 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  transition={{ delay: idx * 0.1 }}
+                                  className="flex items-start space-x-3 px-3 py-2 bg-white dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600"
+                                >
+                                  <div className="flex-shrink-0 w-16 text-center">
+                                    <div className="text-xs font-semibold text-primary-600 dark:text-primary-400">
+                                      {schedule.startTime.substring(0, 5)}
+                                    </div>
+                                    <div className="text-xs text-gray-500 dark:text-gray-400">
+                                      {schedule.endTime.substring(0, 5)}
+                                    </div>
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="text-sm font-semibold text-gray-900 dark:text-white truncate">
+                                      {schedule.subject}
+                                    </div>
+                                    <div className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+                                      🏫 Phòng {schedule.room}
+                                    </div>
+                                    {schedule.teacher && (
+                                      <div className="text-xs text-gray-600 dark:text-gray-400">
+                                        👨‍🏫 {schedule.teacher}
+                                      </div>
+                                    )}
+                                    {schedule.notes && (
+                                      <div className="text-xs text-gray-500 dark:text-gray-500 mt-1">
+                                        {schedule.notes}
+                                      </div>
+                                    )}
+                                  </div>
+                                </motion.div>
+                              ))}
+                            </div>
+                          )}
+
                           <div className={`flex items-center justify-between mt-1 text-xs ${message.sender === 'user' ? 'text-white/90' : 'text-gray-500 dark:text-gray-400'}`}>
                             <span>
                               {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -1068,6 +1175,8 @@ const ChatPage = () => {
                   );
                 })}
               </AnimatePresence>
+              )}
+              
               {loading && (
                 <motion.div
                   initial={{ opacity: 0 }}
@@ -1244,6 +1353,7 @@ const ChatPage = () => {
           </div>
         </div>
       </Layout>
+      </div> {/* Close chat-page-modern */}
       
       {/* Email Draft Overlay - Auto-open when draft exists */}
       {console.log('🎨 Rendering EmailDraftOverlay, draft:', emailDraftOverlay)}

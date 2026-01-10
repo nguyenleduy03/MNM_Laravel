@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agent For Edu - Laravel API</title>
+    <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5.9.0/swagger-ui.css">
+    <style>
+        body { margin: 0; }
+        .topbar-wrapper { display: flex; align-items: center; }
+        .topbar-wrapper img { height: 40px; }
+        .swagger-ui .info { margin: 20px 0; }
+        .swagger-ui .info .title { font-size: 28px; }
+    </style>
+</head>
+<body>
+    <div id="swagger-ui"></div>
+    <script src="https://unpkg.com/swagger-ui-dist@5.9.0/swagger-ui-bundle.js"></script>
+    <script>
+        window.onload = function() {
+            const ui = SwaggerUIBundle({
+                spec: {
+                    "openapi": "3.0.0",
+                    "info": {
+                        "title": "🎓 Agent For Edu - Laravel API",
+                        "description": "PHP Backend API - Port 8001",
+                        "version": "1.0.0"
+                    },
+                    "servers": [{"url": "http://127.0.0.1:8001"}],
+                    "components": {
+                        "securitySchemes": {
+                            "bearerAuth": {"type": "http", "scheme": "bearer", "bearerFormat": "JWT"}
+                        }
+                    },
+                    "tags": [
+                        {"name": "Health"},
+                        {"name": "Auth"},
+                        {"name": "Courses"},
+                        {"name": "Lessons"},
+                        {"name": "Quiz"},
+                        {"name": "Chat"},
+                        {"name": "Flashcards"},
+                        {"name": "Schedules"},
+                        {"name": "Credentials"}
+                    ],
+                    "paths": {}
+                },
+                dom_id: '#swagger-ui',
+                presets: [SwaggerUIBundle.presets.apis, SwaggerUIBundle.SwaggerUIStandalonePreset],
+                layout: "BaseLayout",
+                persistAuthorization: true
+            });
+            
+            // Load full spec
+            fetch('/api-docs.json').then(r => r.json()).then(spec => {
+                ui.specActions.updateSpec(JSON.stringify(spec));
+            });
+        };
+    </script>
+</body>
+</html>

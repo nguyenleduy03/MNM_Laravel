@@ -1,19 +1,19 @@
-# Start Fullstack Application with Google OAuth
-# Version: 2.0.0
+# Start Fullstack Application with Laravel Backend
+# Version: 4.0.0 - Laravel Only (Spring Boot removed)
 
 Write-Host "============================================================" -ForegroundColor Cyan
-Write-Host " Starting Full Stack Application with Google OAuth" -ForegroundColor Yellow
+Write-Host " Starting Full Stack Application with Laravel" -ForegroundColor Yellow
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host ""
 
-# Check Java
-Write-Host "[1/5] Checking Java..." -ForegroundColor Yellow
-$javaExists = Get-Command java -ErrorAction SilentlyContinue
-if (-not $javaExists) {
-    Write-Host "   [ERROR] Java not found!" -ForegroundColor Red
+# Check PHP
+Write-Host "[1/5] Checking PHP..." -ForegroundColor Yellow
+$phpPath = "C:\php\php.exe"
+if (-not (Test-Path $phpPath)) {
+    Write-Host "   [ERROR] PHP not found at C:\php!" -ForegroundColor Red
     exit 1
 }
-Write-Host "   [OK] Java found" -ForegroundColor Green
+Write-Host "   [OK] PHP found" -ForegroundColor Green
 
 # Check Python
 Write-Host "[2/5] Checking Python..." -ForegroundColor Yellow
@@ -46,9 +46,9 @@ Write-Host ""
 Write-Host "[5/5] Starting all services..." -ForegroundColor Yellow
 Write-Host ""
 
-# Start Spring Boot
-Write-Host "[*] Starting Spring Boot (Port 8080)..." -ForegroundColor Cyan
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$PSScriptRoot\backend\SpringService\agentforedu'; Write-Host '[Spring Boot Server]' -ForegroundColor Green; .\mvnw.cmd spring-boot:run"
+# Start Laravel Backend
+Write-Host "[*] Starting Laravel Backend (Port 8001)..." -ForegroundColor Cyan
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$PSScriptRoot\backend\LaravelService'; Write-Host '[Laravel Server - Port 8001]' -ForegroundColor Green; C:\php\php.exe artisan serve --port=8001 --no-ansi 2>&1"
 
 # Wait a bit
 Start-Sleep -Seconds 3
@@ -86,8 +86,9 @@ Write-Host ""
 Write-Host "Service URLs:" -ForegroundColor Yellow
 Write-Host ""
 Write-Host "   Frontend:           http://localhost:5173" -ForegroundColor White
-Write-Host "   Spring Boot:        http://localhost:8080" -ForegroundColor White
-Write-Host "     - Swagger UI:     http://localhost:8080/swagger-ui/index.html" -ForegroundColor Gray
+Write-Host "   Laravel Backend:    http://localhost:8001" -ForegroundColor White
+Write-Host "     - Health:         http://localhost:8001/api/health" -ForegroundColor Gray
+Write-Host "     - Swagger:        http://localhost:8001/swagger.html" -ForegroundColor Gray
 Write-Host "   AI Service:         http://localhost:8000" -ForegroundColor White
 Write-Host "     - Docs:           http://localhost:8000/docs" -ForegroundColor Gray
 Write-Host "   OAuth Service:      http://localhost:8003" -ForegroundColor White
@@ -95,15 +96,8 @@ Write-Host "     - Docs:           http://localhost:8003/docs" -ForegroundColor 
 Write-Host "   Google Cloud:       http://localhost:8004" -ForegroundColor White
 Write-Host "     - Docs:           http://localhost:8004/docs" -ForegroundColor Gray
 Write-Host ""
-Write-Host "Quick Actions:" -ForegroundColor Yellow
-Write-Host "   1. Open Frontend:   http://localhost:5173" -ForegroundColor Cyan
-Write-Host "   2. Login -> Settings -> Connect Google" -ForegroundColor Cyan
-Write-Host "   3. Test in Chat:    'Dich sang tieng Anh: Xin chao'" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "Tips:" -ForegroundColor Yellow
-Write-Host "   - Close PowerShell windows to stop services" -ForegroundColor Gray
-Write-Host "   - Check logs in each window for errors" -ForegroundColor Gray
-Write-Host "   - Run .\test-google-oauth.ps1 to verify setup" -ForegroundColor Gray
+Write-Host "Note: Using Laravel (PHP) as backend" -ForegroundColor Magenta
+Write-Host "      Spring Boot has been removed from this project" -ForegroundColor Magenta
 Write-Host ""
 
 Read-Host "Press Enter to exit"

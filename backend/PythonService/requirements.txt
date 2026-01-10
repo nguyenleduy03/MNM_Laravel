@@ -1,4 +1,4 @@
-fastapi
+`   `   `   `   fastapi
 uvicorn[standard]
 google-generativeai
 python-dotenv
@@ -8,6 +8,7 @@ cryptography==41.0.7
 chromadb
 sentence-transformers
 nest-asyncio
+PyJWT==2.8.0
 
 # LangChain - AI Agent Framework
 langchain>=0.1.0

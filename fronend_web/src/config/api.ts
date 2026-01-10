@@ -1,6 +1,7 @@
 export const API_CONFIG = {
-  SPRING_BOOT_URL: 'http://localhost:8080',
-  FASTAPI_URL: 'http://localhost:8000',
+  // Laravel Backend (PHP) - Port 8001
+  SPRING_BOOT_URL: 'http://localhost:8001',
+  FASTAPI_URL: 'http://localhost:8000', // Python AI Service (port 8000)
   TIMEOUT: 30000,
 };
 

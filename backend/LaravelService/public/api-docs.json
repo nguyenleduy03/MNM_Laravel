@@ -1,0 +1,170 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Agent For Edu - Laravel API",
+    "description": "PHP Backend API cho hệ thống học tập AI - Port 8001",
+    "version": "1.0.0"
+  },
+  "servers": [{"url": "http://127.0.0.1:8001", "description": "Laravel Server"}],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {"type": "http", "scheme": "bearer", "bearerFormat": "JWT"}
+    },
+    "schemas": {
+      "LoginRequest": {
+        "type": "object",
+        "required": ["username", "password"],
+        "properties": {
+          "username": {"type": "string", "example": "testuser"},
+          "password": {"type": "string", "example": "123456"}
+        }
+      },
+      "RegisterRequest": {
+        "type": "object",
+        "required": ["username", "email", "password", "fullName"],
+        "properties": {
+          "username": {"type": "string", "example": "newuser"},
+          "email": {"type": "string", "example": "newuser@test.com"},
+          "password": {"type": "string", "example": "123456"},
+          "fullName": {"type": "string", "example": "New User"},
+          "role": {"type": "string", "enum": ["USER", "STUDENT", "TEACHER"], "example": "STUDENT"}
+        }
+      }
+    }
+  },
+  "tags": [
+    {"name": "Health"}, {"name": "Auth"}, {"name": "Courses"}, {"name": "Lessons"},
+    {"name": "Quiz"}, {"name": "Chat"}, {"name": "Flashcards"}, {"name": "Schedules"}, {"name": "Credentials"}
+  ],
+  "paths": {
+    "/api/health": {
+      "get": {"tags": ["Health"], "summary": "Health Check", "responses": {"200": {"description": "OK"}}}
+    },
+    "/api/auth/register": {
+      "post": {
+        "tags": ["Auth"], "summary": "Đăng ký tài khoản",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/RegisterRequest"}}}},
+        "responses": {"201": {"description": "Đăng ký thành công"}, "422": {"description": "Validation error"}}
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "tags": ["Auth"], "summary": "Đăng nhập",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/LoginRequest"}}}},
+        "responses": {"200": {"description": "Token + User"}, "401": {"description": "Sai thông tin"}}
+      }
+    },
+    "/api/auth/profile": {
+      "get": {"tags": ["Auth"], "summary": "Xem profile", "security": [{"bearerAuth": []}], "responses": {"200": {"description": "User info"}}}
+    },
+    "/api/auth/update-profile": {
+      "put": {
+        "tags": ["Auth"], "summary": "Cập nhật profile", "security": [{"bearerAuth": []}],
+        "requestBody": {"content": {"application/json": {"schema": {"type": "object", "properties": {"fullName": {"type": "string"}, "avatarUrl": {"type": "string"}}}}}},
+        "responses": {"200": {"description": "Updated"}}
+      }
+    },
+    "/api/auth/change-password": {
+      "post": {
+        "tags": ["Auth"], "summary": "Đổi mật khẩu", "security": [{"bearerAuth": []}],
+        "requestBody": {"content": {"application/json": {"schema": {"type": "object", "properties": {"currentPassword": {"type": "string"}, "newPassword": {"type": "string"}}}}}},
+        "responses": {"200": {"description": "Changed"}}
+      }
+    },
+    "/api/courses": {
+      "get": {"tags": ["Courses"], "summary": "Danh sách khóa học", "security": [{"bearerAuth": []}], "responses": {"200": {"description": "List"}}},
+      "post": {
+        "tags": ["Courses"], "summary": "Tạo khóa học", "security": [{"bearerAuth": []}],
+        "requestBody": {"content": {"application/json": {"schema": {"type": "object", "properties": {"title": {"type": "string"}, "description": {"type": "string"}, "isPublic": {"type": "boolean"}}}}}},
+        "responses": {"201": {"description": "Created"}}
+      }
+    },
+    "/api/courses/{id}": {
+      "get": {"tags": ["Courses"], "summary": "Chi tiết khóa học", "security": [{"bearerAuth": []}], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}], "responses": {"200": {"description": "Detail"}}},
+      "put": {"tags": ["Courses"], "summary": "Cập nhật khóa học", "security": [{"bearerAuth": []}], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}], "responses": {"200": {"description": "Updated"}}},
+      "delete": {"tags": ["Courses"], "summary": "Xóa khóa học", "security": [{"bearerAuth": []}], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}], "responses": {"200": {"description": "Deleted"}}}
+    },
+    "/api/courses/{id}/enroll": {
+      "post": {"tags": ["Courses"], "summary": "Đăng ký khóa học", "security": [{"bearerAuth": []}], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}], "responses": {"200": {"description": "Enrolled"}}}
+    },
+    "/api/courses/my-courses": {
+      "get": {"tags": ["Courses"], "summary": "Khóa học của tôi", "security": [{"bearerAuth": []}], "responses": {"200": {"description": "List"}}}
+    },
+    "/api/courses/my-enrollments": {
+      "get": {"tags": ["Courses"], "summary": "Khóa học đã đăng ký", "security": [{"bearerAuth": []}], "responses": {"200": {"description": "List"}}}
+    },
+    "/api/courses/{courseId}/lessons": {
+      "get": {"tags": ["Lessons"], "summary": "Danh sách bài học", "security": [{"bearerAuth": []}], "parameters": [{"name": "courseId", "in": "path", "required": true, "schema": {"type": "integer"}}], "responses": {"200": {"description": "List"}}},
+      "post": {"tags": ["Lessons"], "summary": "Tạo bài học", "security": [{"bearerAuth": []}], "parameters": [{"name": "courseId", "in": "path", "required": true, "schema": {"type": "integer"}}], "responses": {"201": {"description": "Created"}}}
+    },
+    "/api/lessons/{id}": {
+      "get": {"tags": ["Lessons"], "summary": "Chi tiết bài học", "security": [{"bearerAuth": []}], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}], "responses": {"200": {"description": "Detail"}}},
+      "put": {"tags": ["Lessons"], "summary": "Cập nhật bài học", "security": [{"bearerAuth": []}], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}], "responses": {"200": {"description": "Updated"}}},
+      "delete": {"tags": ["Lessons"], "summary": "Xóa bài học", "security": [{"bearerAuth": []}], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}], "responses": {"200": {"description": "Deleted"}}}
+    },
+    "/api/quiz/generate": {
+      "post": {
+        "tags": ["Quiz"], "summary": "Tạo quiz từ nội dung", "security": [{"bearerAuth": []}],
+        "requestBody": {"content": {"application/json": {"schema": {"type": "object", "properties": {"content": {"type": "string"}, "numQuestions": {"type": "integer", "default": 5}}}}}},
+        "responses": {"200": {"description": "Quiz generated"}}
+      }
+    },
+    "/api/quiz/{id}": {
+      "get": {"tags": ["Quiz"], "summary": "Chi tiết quiz", "security": [{"bearerAuth": []}], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}], "responses": {"200": {"description": "Detail"}}}
+    },
+    "/api/quiz/{id}/submit": {
+      "post": {"tags": ["Quiz"], "summary": "Nộp bài quiz", "security": [{"bearerAuth": []}], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}], "responses": {"200": {"description": "Result"}}}
+    },
+    "/api/chat/sessions": {
+      "get": {"tags": ["Chat"], "summary": "Danh sách phiên chat", "security": [{"bearerAuth": []}], "responses": {"200": {"description": "List"}}},
+      "post": {"tags": ["Chat"], "summary": "Tạo phiên chat mới", "security": [{"bearerAuth": []}], "responses": {"201": {"description": "Created"}}}
+    },
+    "/api/chat/sessions/{sessionId}/messages": {
+      "get": {"tags": ["Chat"], "summary": "Lấy tin nhắn", "security": [{"bearerAuth": []}], "parameters": [{"name": "sessionId", "in": "path", "required": true, "schema": {"type": "integer"}}], "responses": {"200": {"description": "Messages"}}},
+      "post": {"tags": ["Chat"], "summary": "Gửi tin nhắn", "security": [{"bearerAuth": []}], "parameters": [{"name": "sessionId", "in": "path", "required": true, "schema": {"type": "integer"}}], "responses": {"200": {"description": "Sent"}}}
+    },
+    "/api/flashcards/decks": {
+      "get": {"tags": ["Flashcards"], "summary": "Danh sách bộ thẻ", "security": [{"bearerAuth": []}], "responses": {"200": {"description": "List"}}},
+      "post": {"tags": ["Flashcards"], "summary": "Tạo bộ thẻ", "security": [{"bearerAuth": []}], "responses": {"201": {"description": "Created"}}}
+    },
+    "/api/flashcards/decks/{id}": {
+      "get": {"tags": ["Flashcards"], "summary": "Chi tiết bộ thẻ", "security": [{"bearerAuth": []}], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}], "responses": {"200": {"description": "Detail"}}},
+      "delete": {"tags": ["Flashcards"], "summary": "Xóa bộ thẻ", "security": [{"bearerAuth": []}], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}], "responses": {"200": {"description": "Deleted"}}}
+    },
+    "/api/flashcards/decks/{deckId}/cards": {
+      "get": {"tags": ["Flashcards"], "summary": "Danh sách thẻ", "security": [{"bearerAuth": []}], "parameters": [{"name": "deckId", "in": "path", "required": true, "schema": {"type": "integer"}}], "responses": {"200": {"description": "Cards"}}},
+      "post": {"tags": ["Flashcards"], "summary": "Thêm thẻ", "security": [{"bearerAuth": []}], "parameters": [{"name": "deckId", "in": "path", "required": true, "schema": {"type": "integer"}}], "responses": {"201": {"description": "Added"}}}
+    },
+    "/api/schedules": {
+      "get": {"tags": ["Schedules"], "summary": "Danh sách lịch học", "security": [{"bearerAuth": []}], "responses": {"200": {"description": "List"}}},
+      "post": {"tags": ["Schedules"], "summary": "Tạo lịch học", "security": [{"bearerAuth": []}], "responses": {"201": {"description": "Created"}}}
+    },
+    "/api/schedules/today": {
+      "get": {"tags": ["Schedules"], "summary": "Lịch hôm nay", "security": [{"bearerAuth": []}], "responses": {"200": {"description": "Today"}}}
+    },
+    "/api/credentials": {
+      "get": {
+        "tags": ["Credentials"], "summary": "Danh sách credentials", "security": [{"bearerAuth": []}],
+        "parameters": [{"name": "active", "in": "query", "schema": {"type": "boolean", "default": true}}, {"name": "category", "in": "query", "schema": {"type": "string"}}],
+        "responses": {"200": {"description": "List"}}
+      },
+      "post": {
+        "tags": ["Credentials"], "summary": "Tạo credential", "security": [{"bearerAuth": []}],
+        "requestBody": {"content": {"application/json": {"schema": {"type": "object", "properties": {"serviceName": {"type": "string"}, "serviceUrl": {"type": "string"}, "username": {"type": "string"}, "password": {"type": "string"}, "purpose": {"type": "string"}, "category": {"type": "string"}}}}}},
+        "responses": {"201": {"description": "Created"}}
+      }
+    },
+    "/api/credentials/{id}": {
+      "get": {"tags": ["Credentials"], "summary": "Chi tiết credential", "security": [{"bearerAuth": []}], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}, {"name": "decrypt", "in": "query", "schema": {"type": "boolean"}}], "responses": {"200": {"description": "Detail"}}},
+      "put": {"tags": ["Credentials"], "summary": "Cập nhật credential", "security": [{"bearerAuth": []}], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}], "responses": {"200": {"description": "Updated"}}},
+      "delete": {"tags": ["Credentials"], "summary": "Xóa credential", "security": [{"bearerAuth": []}], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "integer"}}], "responses": {"200": {"description": "Deleted"}}}
+    },
+    "/api/credentials/search": {
+      "post": {
+        "tags": ["Credentials"], "summary": "Tìm kiếm credential", "security": [{"bearerAuth": []}],
+        "requestBody": {"content": {"application/json": {"schema": {"type": "object", "properties": {"query": {"type": "string"}}}}}},
+        "responses": {"200": {"description": "Results"}}
+      }
+    }
+  }
+}
